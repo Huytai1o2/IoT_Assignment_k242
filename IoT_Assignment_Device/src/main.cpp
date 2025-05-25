@@ -13,14 +13,14 @@
 #define SDA_PIN GPIO_NUM_11
 #define SCL_PIN GPIO_NUM_12
 
-constexpr char WIFI_SSID[] = "P 1024";
-constexpr char WIFI_PASSWORD[] = "Tuanlocmuido";
-constexpr char TOKEN[] = "sYdiIvJeZBtQDq2j8WGo";
+constexpr char WIFI_SSID[] = "nguyen huy tai";
+constexpr char WIFI_PASSWORD[] = "03056675";
+constexpr char TOKEN[] = "4ten7qvaopjyof8jg7mt";
 constexpr char THINGSBOARD_SERVER[] = "app.coreiot.io";
 
 constexpr uint16_t THINGSBOARD_PORT = 1883U;
 constexpr uint32_t SERIAL_DEBUG_BAUD = 115200U;
-constexpr int16_t TELEMETRY_SEND_INTERVAL = 10000U;
+constexpr int16_t TELEMETRY_SEND_INTERVAL = 5000U;
 
 constexpr size_t MAX_ATTRIBUTES = 6U;
 
@@ -253,7 +253,7 @@ void taskDHT20(void *parameter) {
         humidity = dht20.getHumidity();
 
         Serial.printf("Temperature: %.2f °C, Humidity: %.2f %%\n", temperature, humidity);
-        vTaskDelay(2000 / portTICK_PERIOD_MS);
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
 }
 

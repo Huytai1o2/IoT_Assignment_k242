@@ -1,0 +1,1 @@
+ curl -X POST --header 'Content-Type: application/json' --header 'Accept: application/json' -d '{"username":"iot.bku@coreiot.io", "password":"iotk242"}' 'https://app.coreiot.io/api/auth/login'
