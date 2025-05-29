@@ -8,13 +8,19 @@
 #include <Attribute_Request.h>
 #include <ArduinoJson.h>
 #include <Shared_Attribute_Update.h>
+// #include "mqtt/async_client.h"
+#include <iostream>
+#include <sstream>
+
+#include <Server_Side_RPC.h>
 
 #define LED_PIN GPIO_NUM_48
 #define SDA_PIN GPIO_NUM_11
 #define SCL_PIN GPIO_NUM_12
+#define LUX GPIO_NUM_1
 
-constexpr char WIFI_SSID[] = "nguyen huy tai";
-constexpr char WIFI_PASSWORD[] = "03056675";
+constexpr char WIFI_SSID[] = "RD-SEAI_2.4G";
+constexpr char WIFI_PASSWORD[] = "";
 constexpr char TOKEN[] = "4ten7qvaopjyof8jg7mt";
 constexpr char THINGSBOARD_SERVER[] = "app.coreiot.io";
 
@@ -45,20 +51,31 @@ WiFiClient wifiClient;
 OTA_Firmware_Update<> ota;
 Espressif_Updater<> updater;
 
+//RPC
+constexpr const char RPC_JSON_METHOD[] = "getJson";
+constexpr const char RPC_SWITCH_METHOD[] = "setSwitch";
+constexpr const char RPC_SWITCH_KEY[] = "switch";
+constexpr uint8_t MAX_RPC_SUBSCRIPTIONS = 3U;
+constexpr uint8_t MAX_RPC_RESPONSE = 5U;
+
 // Attribute request API
 Attribute_Request<2U, MAX_ATTRIBUTES> attr_request;
 
 // Attribute update API
 Shared_Attribute_Update<3U, MAX_ATTRIBUTES> shared_update;
 
+Server_Side_RPC<MAX_RPC_SUBSCRIPTIONS, MAX_RPC_RESPONSE> rpc;
 // API array
-const std::array<IAPI_Implementation*, 2U> apis = { &ota, &shared_update };
+const std::array<IAPI_Implementation*, 3U> apis = { &ota, &shared_update, &rpc };
 
 // ThingsBoard client
 Arduino_MQTT_Client mqttClient(wifiClient);
 constexpr size_t MAX_STACK_SIZE = 4096;
 constexpr uint16_t MAX_MESSAGE_SIZE = 1024;
 ThingsBoard tb(mqttClient, MAX_MESSAGE_SIZE, MAX_MESSAGE_SIZE, MAX_STACK_SIZE, apis);
+
+// Statuses for subscribing to rpc
+bool subscribed = false;
 
 // Sensor DHT20
 DHT20 dht20;
@@ -70,15 +87,21 @@ bool updateRequestSent = false;
 char currentFirmwareTitle[64];
 char currentFirmwareVersion[32];
 
+int LightValue = 0;
+
 // Forward declaration tasks
 void taskThingsBoard(void *parameter);
-void taskSendTelemetry(void *parameter);
 void taskDHT20(void *parameter);
+void taskLight(void *parameter);
+void taskSerial(void *parameter);
 void taskPrintVersion(void *parameter);
+void taskSerialCommand(void *parameter);
 
 // Khai báo TaskHandle_t
 TaskHandle_t taskDHT20Handle = NULL;
 TaskHandle_t taskSendTelemetryHandle = NULL;
+TaskHandle_t taskLightHandle = NULL;
+TaskHandle_t taskSerialHandle = NULL;
 
 // WiFi connect function
 void InitWiFi() {
@@ -97,6 +120,38 @@ bool reconnect() {
     return true;
 }
 
+void processGetJson(const JsonVariantConst &data, JsonDocument &response) {
+//   Serial.println("Received the json RPC method");
+
+  // Size of the response document needs to be configured to the size of the innerDoc + 1.
+  StaticJsonDocument<JSON_OBJECT_SIZE(128)> innerDoc;
+  innerDoc["string"] = "exampleResponseString";
+  innerDoc["int"] = 5;
+  innerDoc["float"] = 5.0f;
+  innerDoc["bool"] = true;
+  response["json_data"] = innerDoc;
+}
+
+void processSwitchChange(const JsonVariantConst &data, JsonDocument &response) {
+//   Serial.println("Received the set switch method");
+
+  // Process data
+  const bool switch_state = data.as<bool>();
+
+//   Serial.print("Example switch state: ");
+//   Serial.println(switch_state);
+
+  if (switch_state) {
+    Serial.println("Switch is ON");
+    digitalWrite(LED_PIN, HIGH);
+  } else {
+    Serial.println("Switch is OFF");
+    digitalWrite(LED_PIN, LOW);
+  }
+
+  response.set(switch_state);
+}
+
 void requestTimedOut() {
     Serial.printf("Attribute request timed out after %llu microseconds\n", REQUEST_TIMEOUT_MICROSECONDS);
 }
@@ -107,12 +162,16 @@ void ota_update_starting_callback() {
     // stop each task
     vTaskSuspend(taskDHT20Handle);
     vTaskSuspend(taskSendTelemetryHandle);
+    vTaskSuspend(taskLightHandle);
+    vTaskSuspend(taskSerialHandle);
 }
 
 void ota_finished_callback(const bool &success) {
   // resume each task
     vTaskResume(taskDHT20Handle);
     vTaskResume(taskSendTelemetryHandle);
+    vTaskSuspend(taskLightHandle);
+    vTaskSuspend(taskSerialHandle);
     strncpy(currentFirmwareTitle, fwTitle, sizeof(currentFirmwareTitle) - 1);
     currentFirmwareTitle[sizeof(currentFirmwareTitle) - 1] = 0;
     strncpy(currentFirmwareVersion, fwVersion, sizeof(currentFirmwareVersion) - 1);
@@ -178,6 +237,11 @@ void processSharedAttributes(const JsonObjectConst &data) {
     }
 }
 
+// const std::string SERVER_ADDRESS("tcp://mqtt.eclipse.org:1883");
+// const std::string CLIENT_ID("C++Client");
+
+// const std::string TOPIC("test/topic");
+
 void setup() {
     strncpy(currentFirmwareTitle, CURRENT_FIRMWARE_TITLE, sizeof(currentFirmwareTitle) - 1);
     currentFirmwareTitle[sizeof(currentFirmwareTitle) - 1] = 0;
@@ -194,9 +258,12 @@ void setup() {
     delay(2000);
     InitWiFi();
 
-    xTaskCreate(taskThingsBoard, "TaskThingsBoard", 4096, NULL, 1, NULL);
-    xTaskCreate(taskSendTelemetry, "TaskSendTelemetry", 4096, NULL, 1, &taskSendTelemetryHandle);
+    // xTaskCreate(taskThingsBoard, "TaskThingsBoard", 4096, NULL, 1, NULL);
+    // xTaskCreate(taskSendTelemetry, "TaskSendTelemetry", 4096, NULL, 1, &taskSendTelemetryHandle);
+    xTaskCreate(taskSerialCommand, "TaskSerialCommand", 2048, NULL, 1, NULL);
     xTaskCreate(taskDHT20, "TaskDHT20", 4096, NULL, 1, &taskDHT20Handle);
+    xTaskCreate(taskLight, "TaskLight", 4096, NULL, 1, &taskLightHandle);
+    xTaskCreate(taskSerial, "TaskSerial", 4096, NULL, 1, &taskSerialHandle);
     xTaskCreate(taskPrintVersion, "TaskPrintVersion", 2048, NULL, 1, NULL);
 }
 
@@ -211,13 +278,33 @@ void taskThingsBoard(void *parameter) {
             Serial.printf("Connecting to ThingsBoard at %s with token %s\n", THINGSBOARD_SERVER, TOKEN);
             if (!tb.connect(THINGSBOARD_SERVER, TOKEN, THINGSBOARD_PORT)) {
                 Serial.println("Failed to connect to ThingsBoard");
-                vTaskDelay(2000 / portTICK_PERIOD_MS);
-                continue;
+                //vTaskDelay(2000 / portTICK_PERIOD_MS);
+                //continue;
             }
             // Reset flags after successful connect
             requestedShared = false;
             currentFwSent = false;
             updateRequestSent = false;
+        }
+
+        if (!subscribed) {
+            Serial.println("Subscribing for RPC...");
+            const std::array<RPC_Callback, MAX_RPC_SUBSCRIPTIONS> callbacks = {
+            // Requires additional memory in the JsonDocument for the JsonDocument that will be copied into the response
+            RPC_Callback{ RPC_JSON_METHOD,           processGetJson },
+            // Internal size can be 0, because if we use the JsonDocument as a JsonVariant and then set the value we do not require additional memory
+            RPC_Callback{ RPC_SWITCH_METHOD,         processSwitchChange }
+            };
+            // Perform a subscription. All consequent data processing will happen in
+            // processTemperatureChange() and processSwitchChange() functions,
+            // as denoted by callbacks array.
+            if (!rpc.RPC_Subscribe(callbacks.cbegin(), callbacks.cend())) {
+            Serial.println("Failed to subscribe for RPC");
+            return;
+            }
+
+            Serial.println("Subscribe done");
+            subscribed = true;
         }
 
         // Send firmware info after connection
@@ -252,20 +339,27 @@ void taskDHT20(void *parameter) {
         temperature = dht20.getTemperature();
         humidity = dht20.getHumidity();
 
-        Serial.printf("Temperature: %.2f °C, Humidity: %.2f %%\n", temperature, humidity);
+        // Serial.printf("Temperature: %.2f °C, Humidity: %.2f %%\n", temperature, humidity);
         vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
 }
 
-void taskSendTelemetry(void *parameter) {
-    while (true) {
-        if (tb.connected()) {
-            Serial.printf("Sending telemetry -> Temp: %.2f °C, Humidity: %.2f %%\n", temperature, humidity);
-            tb.sendTelemetryData(TEMP_ATTR, temperature);
-            tb.sendTelemetryData(HUMIDITY_ATTR, humidity);
-            tb.sendTelemetryData("fw_state", "UPDATED");
-        }
-        vTaskDelay(TELEMETRY_SEND_INTERVAL / portTICK_PERIOD_MS);
+void taskLight(void *parameter) {
+  while(1){
+    LightValue = analogRead(LUX);///////////////////////////////////////////////////////
+
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+  }
+}
+void taskSerial(void *parameter){
+    while(1){
+        Serial.print("DATA:" );
+        Serial.print(temperature);
+        Serial.print(", ");
+        Serial.print(humidity);
+        Serial.print(", ");
+        Serial.println(LightValue);
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
 }
 
@@ -273,6 +367,29 @@ void taskPrintVersion(void *parameter) {
     while (true) {
         Serial.printf("Firmware Title: %s, Version: %s\n", currentFirmwareTitle, currentFirmwareVersion);
         vTaskDelay(15000 / portTICK_PERIOD_MS);
+    }
+}
+
+void taskSerialCommand(void *parameter) {
+    StaticJsonDocument<64> doc;
+    String input;
+    while (1) {
+        while (Serial.available()) {
+            char c = Serial.read();
+            if (c == '\n') {
+                // Đã nhận đủ 1 dòng
+                DeserializationError err = deserializeJson(doc, input);
+                if (!err && doc.containsKey("switch")) {
+                    bool sw = doc["switch"];
+                    digitalWrite(LED_PIN, sw ? HIGH : LOW);
+                    Serial.printf("Set LED by serial: %s\n", sw ? "ON" : "OFF");
+                }
+                input = "";
+            } else {
+                input += c;
+            }
+        }
+        vTaskDelay(10 / portTICK_PERIOD_MS);
     }
 }
 
