@@ -9,3 +9,5 @@
 5. npm start
 
 --> The app will run at http://localhost:3000
+
+Looking for more information: https://github.com/Huytai1o2/IoT_Assignment_k242/blob/huytai102/IoT_report.pdf
