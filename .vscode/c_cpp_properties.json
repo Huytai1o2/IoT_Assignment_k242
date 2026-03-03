@@ -1,0 +1,28 @@
+{
+  "configurations": [
+    {
+      "name": "windows-gcc-x86",
+      "includePath": [
+        "${workspaceFolder}/**",
+        "D:/IoT/include",
+        "D:/IoT/src",
+        "C:/Users/nguye/.platformio/packages/framework-arduino-avr/cores/arduino",
+        "C:/Users/nguye/.platformio/packages/framework-arduino-avr/variants/standard",
+        "C:/Users/nguye/.platformio/packages/framework-arduino-avr/libraries/EEPROM/src",
+        "C:/Users/nguye/.platformio/packages/framework-arduino-avr/libraries/HID/src",
+        "C:/Users/nguye/.platformio/packages/framework-arduino-avr/libraries/SPI/src",
+        "C:/Users/nguye/.platformio/packages/framework-arduino-avr/libraries/SoftwareSerial/src",
+        "C:/Users/nguye/.platformio/packages/framework-arduino-avr/libraries/Wire/src",
+        ""
+      ],
+      "compilerPath": "C:/Users/nguye/.platformio/packages/toolchain-atmelavr/bin/avr-gcc.exe",
+      "cStandard": "gnu11",
+      "cppStandard": "gnu++11",
+      "intelliSenseMode": "windows-gcc-x86",
+      "compilerArgs": [
+        ""
+      ]
+    }
+  ],
+  "version": 4
+}
